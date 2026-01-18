@@ -353,24 +353,24 @@ void causal_conv1d_channellast_fwd_kernel(ConvParamsBase params) {
 template<int kNThreads, int kWidth, typename input_t, typename weight_t>
 void causal_conv1d_channellast_fwd_launch(ConvParamsBase &params, cudaStream_t stream) {
     BOOL_SWITCH(params.seq_idx_ptr != nullptr, kHasSeqIdx, [&] {
-        using Ktraits = Causal_conv1d_channellast_fwd_kernel_traits<kNThreads, kWidth, 64, true, input_t, weight_t>;
-        // constexpr int kSmemSize = Ktraits::kSmemSize;
-        constexpr int kChunkSizeL = Ktraits::kChunkSizeL;
-        constexpr int kChunkSizeC = Ktraits::kNEltsPerRow;
-        const int n_chunks_L = (params.seqlen + kChunkSizeL - 1) / kChunkSizeL;
-        const int n_chunks_C = (params.dim + kChunkSizeC - 1) / kChunkSizeC;
-        dim3 grid(params.batch, n_chunks_L, n_chunks_C);
-        dim3 block(Ktraits::kNThreads);
-        auto kernel = &causal_conv1d_channellast_fwd_kernel<Ktraits, kHasSeqIdx>;
-        // if (kSmemSize >= 48 * 1024) {
-        //     C10_CUDA_CHECK(cudaFuncSetAttribute(
-        //         kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, kSmemSize));
-        //     }
-        // kernel<<<grid, Ktraits::kNThreads, kSmemSize, stream>>>(params);
-        kernel<<<grid, Ktraits::kNThreads, 0, stream>>>(params);
-        C10_CUDA_KERNEL_LAUNCH_CHECK();
+        // Use larger chunk size for long sequences to reduce grid size and launch overhead
+        // This matches the backward kernel's adaptive chunking strategy
+        BOOL_SWITCH(params.seqlen <= 128, kChunkSizeL64, [&] {
+            static constexpr int kChunk = kChunkSizeL64 ? 64 : 128;
+            using Ktraits = Causal_conv1d_channellast_fwd_kernel_traits<kNThreads, kWidth, kChunk, true, input_t, weight_t>;
+            constexpr int kChunkSizeL = Ktraits::kChunkSizeL;
+            constexpr int kChunkSizeC = Ktraits::kNEltsPerRow;
+            const int n_chunks_L = (params.seqlen + kChunkSizeL - 1) / kChunkSizeL;
+            const int n_chunks_C = (params.dim + kChunkSizeC - 1) / kChunkSizeC;
+            dim3 grid(params.batch, n_chunks_L, n_chunks_C);
+            dim3 block(Ktraits::kNThreads);
+            auto kernel = &causal_conv1d_channellast_fwd_kernel<Ktraits, kHasSeqIdx>;
+            kernel<<<grid, Ktraits::kNThreads, 0, stream>>>(params);
+            C10_CUDA_KERNEL_LAUNCH_CHECK();
+        });
     });
 }
+
 
 template<typename input_t, typename weight_t>
 void causal_conv1d_channellast_fwd_cuda(ConvParamsBase &params, cudaStream_t stream) {
