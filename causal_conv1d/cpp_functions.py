@@ -100,6 +100,10 @@ def causal_conv1d_fwd_function(
     final_states_out: torch.Tensor | None,
     silu_activation: bool,
 ) -> torch.Tensor:
+    # Note: The CUDA kernel requires output to have same strides as input.
+    # This creates a non-contiguous output for channel-last input, which causes
+    # torch.compile graph breaks. See causal_conv1d_interface.py for the fix
+    # that makes output contiguous after the kernel call.
     out = torch.empty_like(x)
     _causal_conv1d_fwd_cpp(
         x=x,

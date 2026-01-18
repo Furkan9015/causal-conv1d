@@ -56,6 +56,10 @@ class CausalConv1dFn(torch.autograd.Function):
         out = causal_conv1d_fwd_function(
             x, weight, bias, seq_idx, initial_states, final_states_out, ctx.activation
         )
+        # Make output contiguous for torch.compile compatibility.
+        # The kernel outputs with same strides as x (channel-last for seq_idx support),
+        # which is non-contiguous. This causes graph breaks in torch.compile.
+        out = out.contiguous()
         ctx.save_for_backward(x, weight, bias, seq_idx, initial_states)
         ctx.return_final_states = return_final_states
         ctx.return_dinitial_states = (
